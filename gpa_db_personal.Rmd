@@ -1,0 +1,776 @@
+---
+title: "GitLab Project Analyzer (GPA)"
+output: 
+  flexdashboard::flex_dashboard:
+    logo: www/hex_GPA_small.png
+    orientation: rows
+    vertical_layout: fill
+    css: styles.css
+    source_code: https://gitlab.devforce.disa.mil/netc-dsd/pmo/GPA
+runtime: shiny
+resource_files:
+  - .Renviron
+---
+
+```{r libraries, include=FALSE}
+library(gitlabr)
+library(janitor)
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(lubridate)
+library(plotly)
+library(shiny)
+library(shinydashboard)
+library(flexdashboard)
+```
+
+```{r access_api}
+
+# DSD - GitLab 
+personal_gitlab_url <- "https://gitlab.com/"
+
+# connect as a fixed user to a GitLab instance for the session
+gitlabr::set_gitlab_connection(
+  gitlab_url = personal_gitlab_url,
+  private_token = Sys.getenv("GITLAB_PERSONAL_TOKEN"))
+
+# All DevForce GitLab Projects
+gl_projects <- 
+  gitlabr::gl_list_projects(
+    max_page = 100, 
+    owner = FALSE) %>% 
+  janitor::clean_names()
+
+```
+
+```{r prep_data}
+# select, filter, format, clean raw data
+#   select - remove the majority of the columns for faster processing
+#   filter - out all user name spaces to leave only groups
+#   format - create L1/2/3 levels to assist is bucketing
+#   clean - general cleaning as required
+prep_gpa <- gl_projects %>% 
+  # dplyr::select(
+  #   id:default_branch,
+  #   forks_count:namespace_full_path,
+  #   packages_enabled:visibility) %>% 
+  dplyr::filter(namespace_kind == "group") %>% 
+  tidyr::separate(
+    col = namespace_full_path, 
+    sep = "/", 
+    into = c("L1", "L2", "L3"), 
+    remove = FALSE, 
+    convert = TRUE) %>% 
+  # dplyr::mutate(
+  #   L2 = dplyr::if_else(
+  #     condition = is.na(L2), 
+  #     true = L1, 
+  #     false = L2),
+  #   L3 = dplyr::if_else(
+  #     condition = is.na(L3), 
+  #     true = L2, 
+  #     false = L3)) %>% 
+  dplyr::mutate(
+    last_activity_at = lubridate::as_date(last_activity_at),
+    created_at = lubridate::as_date(created_at))
+
+```
+
+Overview
+=====================================
+
+```{r prep_overview}
+# develop metrics data 
+#   total projects
+#   number of internal projects
+#   number of private projects
+#   average time a project is active
+tot_projects <- nrow(prep_gpa)
+num_internal <- prep_gpa %>% 
+  dplyr::count(visibility) %>% 
+  dplyr::filter(visibility == "internal") %>% 
+  dplyr::pull(n)
+num_private <- prep_gpa %>% 
+  dplyr::count(visibility) %>% 
+  dplyr::filter(visibility == "private") %>% 
+  dplyr::pull(n)
+ave_life <- prep_gpa %>% 
+  dplyr::mutate(project_length = last_activity_at - created_at) %>% 
+  dplyr::summarise(ave_life = mean(project_length)) %>% 
+  dplyr::pull(ave_life)
+med_life <- prep_gpa %>% 
+  dplyr::mutate(project_length = last_activity_at - created_at) %>% 
+  dplyr::summarise(med_life = median(project_length)) %>% 
+  dplyr::pull(med_life)
+```
+
+The GPA v0.0.6 report is generated using the [`gitlabr`](https://github.com/jirkalewandowski/gitlabr) package accessing [DevForce GitLab Projects](https://gitlab.devforce.disa.mil/). The GPA report displays metrics only for the __master branch__ of a project, other branches will not register until they are merged onto the master. Developer: [MAJ Evan Munson](mailto:evan.l.munson.mil@army.mil).
+
+Row 
+-----------------------------------------------------------------------
+
+### Total Projects
+
+```{r tot_projects}
+flexdashboard::valueBox(
+  value = tot_projects, 
+  color = "#fca172",
+  icon = "ion-android-apps")
+```
+
+### Number of Internal Projects
+
+```{r num_internal}
+flexdashboard::valueBox(
+  value = num_internal, 
+  color = "#f98228",
+  icon = "ion-clipboard")
+```
+
+### Number of Private Projects
+
+```{r num_private}
+flexdashboard::valueBox(
+  value = num_private, 
+  color = "#fc6b02",
+  icon = "ion-briefcase")
+```
+
+### Project Length: Average (days)
+
+```{r ave_life}
+flexdashboard::valueBox(
+  value = round(x = ave_life, digits = 1), 
+  color = "#dd561c",
+  icon = "ion-ios-analytics-outline")
+```
+
+### Project Length: Median (days)
+
+```{r med_life}
+flexdashboard::valueBox(
+  value = round(x = med_life, digits = 1), 
+  color = "#893101",
+  icon = "ion-ios-barcode-outline")
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Project Creation Through Time {data-width=700}
+
+```{r projects_time}
+# activity through time
+prep_activity <- prep_gpa %>% 
+  dplyr::mutate(
+    day = lubridate::round_date(
+      x = created_at,
+      unit =  "month")) %>% 
+  dplyr::group_by(day) %>% 
+  dplyr::summarise(visits = n()) %>% 
+  dplyr::arrange(dplyr::desc(visits))
+
+plot_activity <- prep_activity %>% 
+  ggplot2::ggplot(
+    ggplot2::aes(
+      x = day, 
+      y = visits)) +
+  ggplot2::geom_point() +
+  ggplot2::geom_smooth(
+    se = FALSE,
+    method = "loess",
+    color = "#e24329") +
+  ggplot2::labs(
+    x = "Year", 
+    y = "Created Projects") +
+  ggplot2::theme_bw()
+
+plotly::ggplotly(plot_activity)
+```
+
+### Top 15 Contributing Organizations {data-width=340}
+
+```{r top_15}
+# top 15 contributing organizations
+prep_orgs <- prep_gpa %>% 
+  dplyr::group_by(L1) %>% 
+  dplyr::count() %>% 
+  dplyr::arrange(dplyr::desc(n)) %>% 
+  dplyr::rename("count" = "n") %>% 
+  utils::head(15)
+
+plot_orgs <- prep_orgs %>% 
+  ggplot2::ggplot(ggplot2::aes(x = reorder(stringr::str_wrap(L1, 30), count), y = count)) +
+  ggplot2::geom_bar(
+    stat = "identity",
+    color = "#fca326", 
+    fill = "#fca326") +
+  ggplot2::theme_bw() +
+  ggplot2::labs(
+    x = "Organizational Group", 
+    y = "Number of Projects") +
+  ggplot2::coord_flip()
+  
+plotly::ggplotly(plot_orgs)
+```
+
+Organization
+=====================================
+
+Sidebar {.sidebar}
+-------------------------------------
+
+### Organization Content
+
+Please select which organization you would like to see the details of.
+
+```{r select_content}
+
+# Group Selector 
+ shiny::selectInput(
+   inputId = "groups", 
+   label = "Group Selector", 
+   choices = sort(unique(prep_gpa$L1)), 
+   selected = "netc-dsd")
+
+# Sub-Group Selector
+# create filter for l2 entries
+sub_group <- reactive({
+  prep_gpa %>% 
+    dplyr::filter(L1 %in% input$groups)
+})
+
+# display L2, based off L1 selection
+observeEvent(sub_group(), {
+  choices <- unique(sub_group()$L2)
+  updateSelectInput(session = session,
+                    inputId = "sub_groups",
+                    choices = choices)
+})
+
+# Display L2 options
+selectInput(inputId = "sub_groups",
+            label = "Sub-Group Selector",
+            choices = NULL)
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+```{r prep_org}
+# filter data frame by selected group (aka L1)
+groups_filter <- reactive(as.character(input$groups))
+sub_groups_filter <- reactive(as.character(input$sub_groups))
+
+
+prep_org <- shiny::reactive({
+  
+  prep_gpa %>%
+    dplyr::filter(
+      L1 == groups_filter() &
+        L2 == sub_groups_filter())
+})
+
+
+```
+
+### Total Projects
+
+```{r tot_projects_org}
+
+renderValueBox({
+  
+  tot <- nrow(prep_org())
+  
+  flexdashboard::valueBox(
+    value = tot, 
+    color = "#fca172",
+    icon = "ion-android-apps")
+})
+
+```
+
+### Number of Internal Projects
+
+```{r num_internal_org}
+
+renderValueBox({
+  
+  num_internal_org <- prep_org() %>% 
+    dplyr::count(visibility) %>% 
+    dplyr::filter(visibility == "internal") %>% 
+    dplyr::pull(n)
+  
+  flexdashboard::valueBox(
+    value = num_internal_org, 
+    color = "#f98228",
+    icon = "ion-clipboard")
+})
+
+```
+
+### Number of Private Projects
+
+```{r num_private_org}
+
+renderValueBox({
+  
+  num_private_org <- prep_org() %>% 
+    dplyr::count(visibility) %>% 
+    dplyr::filter(visibility == "private") %>% 
+    dplyr::pull(n)
+  
+  flexdashboard::valueBox(
+    value = num_private_org, 
+    color = "#fc6b02",
+    icon = "ion-briefcase")
+})
+
+```
+
+### Project Length: Average (days)
+
+```{r ave_life_org}
+
+renderValueBox({
+  
+  ave_life_org <- prep_org() %>% 
+    dplyr::mutate(
+      project_length = last_activity_at - created_at) %>% 
+    dplyr::summarise(
+      ave_life = mean(project_length)) %>% 
+    dplyr::pull(ave_life)
+  
+  flexdashboard::valueBox(
+    value = round(x = ave_life_org, digits = 1), 
+    color = "#dd561c",
+    icon = "ion-ios-analytics-outline")
+})
+
+```
+
+### Project Length: Median (days)
+
+```{r med_life_org}
+
+renderValueBox({
+  
+  med_life_org <- prep_org() %>% 
+    dplyr::mutate(
+      project_length = last_activity_at - created_at) %>% 
+    dplyr::summarise(
+      med_life = median(project_length)) %>% 
+    dplyr::pull(med_life)
+  
+  flexdashboard::valueBox(
+    value = round(x = med_life_org, digits = 1), 
+    color = "#893101",
+    icon = "ion-ios-barcode-outline")
+})
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### GitLab Code Repositories {data-width=700}
+
+```{r repo_time}
+# view code repos through time by group (aka L1)
+
+renderPlotly({
+  
+  prep_projects <- prep_org() %>% 
+    dplyr::arrange(-dplyr::desc(created_at)) %>% 
+    dplyr::mutate(
+      proj_ord = dplyr::row_number()) %>% 
+    dplyr::relocate(proj_ord, .before = id) %>% 
+    dplyr::mutate(
+      name = forcats::fct_reorder(name, proj_ord),
+      name = forcats::fct_rev(name)) 
+  
+  plot_projects <- prep_projects %>% 
+    ggplot2::ggplot(
+      ggplot2::aes(y = name)) +
+    ggplot2::geom_segment(
+      ggplot2::aes(x = created_at,
+                   xend = last_activity_at,
+                   y = name, yend = name),
+      color = "#e24329", 
+      lineend = "round",
+      size = 2) +
+    ggplot2::geom_vline(
+      ggplot2::aes(
+        xintercept = as.numeric(Sys.Date())), 
+      color = "red", 
+      linetype = "dashed") +
+    ggplot2::scale_x_date() +
+    ggplot2::theme_bw() +
+    ggplot2::labs(
+      x = "Year", 
+      y = "Project")
+  
+  plotly::ggplotly(plot_projects)
+  
+})
+
+```
+
+### Organization Sub-Groups {data-width=340}
+
+```{r sub_group}
+
+renderPlotly({
+
+  # view sub group (aka L2) repo content given a group (aka L1)
+  prep_levels <- prep_org() %>%
+    dplyr::group_by(L3) %>%
+    dplyr::count() %>%
+    dplyr::arrange(dplyr::desc(n))
+
+  plot_levels <- prep_levels %>%
+    ggplot2::ggplot(
+      ggplot2::aes(
+        x = reorder(
+          stringr::str_wrap(L3, 30),
+          n),
+        y = n)) +
+    ggplot2::geom_bar(
+      stat = "identity",
+      color = "#fca326",
+      fill = "#fca326") +
+    ggplot2::theme_bw() +
+    ggplot2::labs(
+      x = "Organizational Group",
+      y = "Number of Projects") +
+    ggplot2::coord_flip()
+
+  plotly::ggplotly(plot_levels)
+  
+})
+
+```
+
+Project
+=====================================
+
+Sidebar {.sidebar}
+-------------------------------------
+
+### Groups
+
+Use the below drop-down menus to navigate to the GitLab Group, Sub-Group and if applicable, Sub-Sub-Group to find the Project you are interested in viewing the details of.
+
+```{r select_project}
+
+# L1
+selectInput(inputId = "level_1",
+            label = "Groups",
+            choices = sort(unique(prep_gpa$L1)),
+            selected = "netc-dsd")
+
+# L2
+# create filter for l2 entries
+filter_level_1 <- reactive({
+  prep_gpa %>% 
+    dplyr::filter(L1 %in% input$level_1)
+})
+
+# display L2, based off L1 selection
+observeEvent(filter_level_1(), {
+  choices <- unique(filter_level_1()$L2)
+  updateSelectInput(session = session,
+                    inputId = "level_2",
+                    choices = choices)
+})
+
+# Display L2 options
+selectInput(inputId = "level_2",
+            label = "Sub-Groups",
+            choices = NULL)
+
+# L3
+# create filter for l3 entries
+filter_level_2 <- reactive({
+  prep_gpa %>% 
+    dplyr::filter(L2 %in% input$level_2)
+})
+
+# display L2, based off L1 selection
+observeEvent(filter_level_2(), {
+  choices <- unique(filter_level_2()$L3)
+  updateSelectInput(session = session,
+                    inputId = "level_3",
+                    choices = choices)
+})
+
+# Display L2 options
+selectInput(inputId = "level_3",
+            label = "Sub-Sub-Groups",
+            choices = NULL)
+```
+
+-------------------------------------
+
+### Projects
+
+Select the Project you are interested in viewing the details of.
+
+```{r project-picker}
+# Project Picker
+# create filter for l3 entries
+filter_level_3 <- reactive({
+  prep_gpa %>% 
+    dplyr::filter(
+      L1 %in% input$level_1 &
+        L2 %in% input$level_2 &
+        L3 %in% input$level_3)
+})
+
+# display Projects, based off L3 selection
+observeEvent(filter_level_3(), {
+  choices <- unique(filter_level_3()$name)
+  updateSelectInput(session = session,
+                    inputId = "project_name",
+                    choices = choices)
+})
+
+# Display Project options
+selectInput(inputId = "project_name",
+            label = "Project",
+            choices = NULL)
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+```{r prep_project}
+# filter data frame by selected group (aka L1)
+filter_level_1_rec <- reactive(as.character(input$level_1))
+filter_level_2_rec <- reactive(as.character(input$level_2))
+filter_level_3_rec <- reactive(as.character(input$level_3))
+filter_project_name_rec <- reactive(as.character(input$project_name))
+
+prep_project <- shiny::reactive({
+  
+  prep_gpa %>%
+    dplyr::select(
+      id,
+      name,
+      L1,
+      L2,
+      L3,
+      forks_count) %>% 
+    dplyr::filter(
+      L1 == filter_level_1_rec() &
+        L2 == filter_level_2_rec() &
+        L3 == filter_level_3_rec() &
+        name == filter_project_name_rec())
+})
+
+# pull number of commits
+project_commits <- shiny::reactive({
+  
+  gitlabr::gl_get_commits(project = prep_project()$id)
+})
+
+# pull number of branches
+project_branches <- shiny::reactive({
+  
+  gitlabr::gl_list_branches(project = prep_project()$id)
+})
+
+# Mean time between commits (commit_diffs has been converted to days)
+project_timedif <- shiny::reactive({
+  
+  project_commits() %>% 
+    dplyr::select(committed_date) %>% 
+    dplyr::mutate(
+      committed_date = lubridate::ymd_hms(
+        committed_date, 
+        tz = "US/Arizona")) %>% 
+    dplyr::arrange(dplyr::desc(committed_date)) %>% 
+    dplyr::mutate(
+      commit_diff = committed_date - dplyr::lead(committed_date),
+      commit_diff = round(
+        x = as.numeric(commit_diff) / 86400, 
+        digits = 3))
+})
+
+
+```
+
+### Number of Commits
+
+```{r num_branches}
+
+renderValueBox({
+  
+  flexdashboard::valueBox(
+    value = nrow(project_commits()), 
+    color = "#fca172",
+    icon = "ion-network")
+})
+
+```
+
+### Number of Branches
+
+```{r num_commits}
+
+renderValueBox({
+
+  flexdashboard::valueBox(
+    value = nrow(project_branches()), 
+    color = "#f98228",
+    icon = "ion-ios-shuffle-strong")
+})
+
+```
+
+### Number of Forks
+
+```{r time_commits}
+
+renderValueBox({
+  
+  fork <- prep_project()$forks_count[1]
+
+  flexdashboard::valueBox(
+    value = fork, 
+    color = "#fc6b02",
+    icon = "ion-fork-repo")
+})
+
+```
+
+### Commits per Day: Average (days)
+
+```{r commits_day}
+
+renderValueBox({
+
+  cpd <- nrow(project_commits()) / 
+    as.numeric(head(project_timedif()$committed_date, n = 1) -
+                 tail(project_timedif()$committed_date, n = 1))
+  
+  flexdashboard::valueBox(
+    value = round(x = cpd, digits = 2), 
+    color = "#dd561c",
+    icon = "ion-ios-analytics-outline")
+})
+
+```
+
+### Project Length: (days)
+
+```{r project_length}
+
+renderValueBox({
+  
+  project_length <- as.numeric(head(project_timedif()$committed_date, n = 1) - 
+                                 tail(project_timedif()$committed_date, n = 1))
+
+  flexdashboard::valueBox(
+    value = round(x = project_length, digits = 2), 
+    color = "#893101",
+    icon = "ion-ios-barcode-outline")
+})
+
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Project Commits {data-width=700}
+
+```{r project_time}
+# view code repos through time by group (aka L1)
+
+renderPlotly({
+  
+  # show project activity over time
+  project_activity <- project_timedif() %>% 
+    dplyr::mutate(
+      day = lubridate::round_date(
+        x = committed_date,
+        unit =  "day")) %>% 
+    dplyr::group_by(day) %>%
+    dplyr::summarise(commits = n())
+  
+  plot_activity <- project_activity %>% 
+    ggplot2::ggplot(
+      ggplot2::aes(
+        x = day, 
+        y = commits)) +
+    ggplot2::geom_point() +
+    ggplot2::geom_line(color = "#e24329") +
+    # ggplot2::geom_smooth(
+    #   se = FALSE,
+    #   method = "loess",
+    #   color = "#e24329") +
+    ggplot2::labs(
+      x = "Year", 
+      y = "Created Projects") +
+    ggplot2::theme_bw()
+  
+  plotly::ggplotly(plot_activity)
+  
+})
+
+```
+
+### Commits by Person {data-width=340}
+
+```{r commits_person}
+
+renderPlotly({
+  
+  # show the number of commits by author(s)
+  project_committers <- project_commits() %>% 
+    dplyr::group_by(author_name) %>% 
+    dplyr::count() %>% 
+    dplyr::arrange(dplyr::desc(n))
+  
+  committers <- project_committers %>% 
+    ggplot2::ggplot(
+      ggplot2::aes(
+        x = reorder(
+          stringr::str_wrap(author_name, 30), 
+          n), 
+        y = n)) +
+    ggplot2::geom_bar(
+      stat = "identity", 
+      color = "#fca326", 
+      fill = "#fca326") +
+    ggplot2::theme_bw() +
+    ggplot2::labs(
+      title = "Top Contributiong Organizational Group", 
+      x = "Organizational Group", 
+      y = "Number of Projects") +
+    ggplot2::coord_flip()
+  
+  plotly::ggplotly(committers)
+  
+})
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,86 @@
+.navbar-inverse .navbar-nav > .active > a,
+.navbar-inverse .navbar-nav > .active > a:hover,
+.navbar-inverse .navbar-nav > .active > a:focus {
+  color: #e24329;
+  background-color: #e24329;
+  border-color: #e24329;
+
+}
+
+.navbar-default .navbar-nav>li>a:focus, .navbar-default .navbar-nav>li>a:hover {
+    color: #fc6d26 !important;
+    background-color: #e24329 !important;
+    border-color: #e24329;
+
+}
+
+.navbar-inverse .navbar-nav>.active>a, .navbar-inverse .navbar-nav>.active>a:focus {
+  color: #fcfcfc;
+  background-color: #e24329;
+  border-color: #e24329;
+  font-weight: 900;
+  font-family: ;
+  
+}
+
+.nav-tabs-custom > .nav-tabs > li > a:hover {
+  color: #e24329;
+  border-color: #e24329;
+
+}
+
+.navbar-default {
+  background-color: #e24329;
+  border-color: #e24329;
+}
+
+.navbar-default:hover {
+  background-color: #e24329;
+  color: #e24329!important;
+  border-color: #e24329;
+}
+
+.navbar .dropdown-menu .fa {
+  min-width: 20px;
+  background-color: #e24329;
+  border-color: #e24329;
+
+}
+
+.navbar-inverse {
+  background-color:  #fca326;
+  border-color: #e24329;
+
+}
+
+.navbar-inverse .navbar-brand {
+  color: #fff;
+  border-color: #e24329;
+
+}
+
+.value-box {
+  color: #fff;
+}
+
+.value-box {
+    font-family: "Raleway","Helvetica Neue",Helvetica,Arial,sans-serif;
+}
+
+.value-box .icon i {
+    color: rgba(255,255,255, 0.25);
+}
+
+.body {
+    font-family: "Raleway","Helvetica Neue",Helvetica,Arial,sans-serif;
+}
+
+.section.sidebar {
+  background-color: #fcfcfc;
+}
+
+ul.nav a:hover { 
+  color: white !important; 
+  background-color: #fc6d26 !important;
+}
+
